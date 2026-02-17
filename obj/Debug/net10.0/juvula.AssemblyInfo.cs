@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("juvula")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+41cf7deeb85e1cc36b36807876ff13d8b73ad2e5")]
 [assembly: System.Reflection.AssemblyProductAttribute("juvula")]
 [assembly: System.Reflection.AssemblyTitleAttribute("juvula")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
