@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "juvula": {
-      "commandName": "Project",
-      "commandLineArgs": "shred --file C:\\Users\\KingEli\\Desktop\\.tr\\a.bat"
-    }
-  }
-}
