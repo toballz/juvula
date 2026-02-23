@@ -1,6 +1,4 @@
 ﻿using juvula;
-using System;
-using System.IO;
 using System.Security.Cryptography;
 
 namespace juvula_cli
@@ -58,23 +56,12 @@ namespace juvula_cli
         // =========================
         static void HandleGenKey(string[] args)
         {
-            string? output = null;
-            int lengthBytes = 32; // default 256-bit
+            string? output = Functions.ArgsParser(args, "--out");
+            int lengthBytes = int.Parse(Functions.ArgsParser(args, "--length") ?? "0"); // min 128 byte
 
-            for (int i = 1; i < args.Length; i++)
-            {
-                if (args[i] == "--out" && i + 1 < args.Length)
-                    output = args[++i];
+            if (string.IsNullOrWhiteSpace(output)) throw new ArgumentException("Specify --out <file>");
 
-                if (args[i] == "--length" && i + 1 < args.Length)
-                    lengthBytes = int.Parse(args[++i]);
-            }
-
-            if (string.IsNullOrWhiteSpace(output))
-                throw new ArgumentException("Specify --out <file>");
-
-            if (lengthBytes < 16)
-                throw new ArgumentException("Minimum key length is 16 bytes (128 bits).");
+            if (lengthBytes < 128) throw new ArgumentException("Minimum key length is 128 bytes (1024 bits).");
 
             if (Directory.Exists(output))
                 output = Path.Combine(output, "juvula.key");
@@ -94,28 +81,17 @@ namespace juvula_cli
         // =========================
         static void HandleEncrypt(string[] args)
         {
-            string? file = null;
-            string? keyFile = null;
+            string? file = Functions.ArgsParser(args, "--file");
+            string? keyFile = Functions.ArgsParser(args, "--keyfile");
 
-            for (int i = 1; i < args.Length; i++)
-            {
-                if (args[i] == "--file" && i + 1 < args.Length)
-                    file = args[++i];
 
-                if (args[i] == "--keyfile" && i + 1 < args.Length)
-                    keyFile = args[++i];
-            }
+            if (file == null || keyFile == null) throw new ArgumentException("Specify --file and --keyfile [--shred (int)]");
 
-            if (file == null || keyFile == null)
-                throw new ArgumentException("Specify --file and --keyfile");
+            if (!File.Exists(file)) throw new FileNotFoundException($"Input file not found: {file}");
 
-            if (!File.Exists(file))
-                throw new FileNotFoundException($"Input file not found: {file}");
+            if (!File.Exists(keyFile)) throw new FileNotFoundException($"Key file not found: {keyFile}");
 
-            if (!File.Exists(keyFile))
-                throw new FileNotFoundException($"Key file not found: {keyFile}");
-
-            string output = file + ".enc";
+            string output = file + "." + Functions.EncodedExtension;
 
             Console.Write("Password: ");
             string password = Functions.ReadPassword();
@@ -123,6 +99,13 @@ namespace juvula_cli
             Crypt.EncryptFileGcm(file, output, password, keyFile);
 
             Console.WriteLine($"Encrypted -> {output}");
+
+            int shredIteration = int.Parse(Functions.ArgsParser(args, "--shred") ?? "0");
+            if (shredIteration > 0)
+            {
+                Console.WriteLine("Shredding original file ...");
+                HandleShred(new string[] { "--file", file, "--iteration", shredIteration.ToString() });
+            }
         }
 
         // =========================
@@ -130,17 +113,10 @@ namespace juvula_cli
         // =========================
         static void HandleDecrypt(string[] args)
         {
-            string? file = null;
-            string? keyFile = null;
+            string? file = Functions.ArgsParser(args, "--file");
+            string? keyFile = Functions.ArgsParser(args, "--keyfile");
 
-            for (int i = 1; i < args.Length; i++)
-            {
-                if (args[i] == "--file" && i + 1 < args.Length)
-                    file = args[++i];
 
-                if (args[i] == "--keyfile" && i + 1 < args.Length)
-                    keyFile = args[++i];
-            }
 
             if (file == null || keyFile == null)
                 throw new ArgumentException("Specify --file and --keyfile");
@@ -151,7 +127,7 @@ namespace juvula_cli
             if (!File.Exists(keyFile))
                 throw new FileNotFoundException($"Key file not found: {keyFile}");
 
-            string output = file.EndsWith(".enc")
+            string output = file.EndsWith("." + Functions.EncodedExtension)
                 ? file[..^4]
                 : file + ".dec";
 
@@ -168,17 +144,8 @@ namespace juvula_cli
         // =========================
         static void HandleHash(string[] args)
         {
-            string? file = null;
-            string? keyFile = null;
-
-            for (int i = 1; i < args.Length; i++)
-            {
-                if (args[i] == "--file" && i + 1 < args.Length)
-                    file = args[++i];
-
-                if (args[i] == "--keyfile" && i + 1 < args.Length)
-                    keyFile = args[++i];
-            }
+            string? file = Functions.ArgsParser(args, "--file");
+            string? keyFile = Functions.ArgsParser(args, "--keyfile");
 
             if (file == null)
                 throw new ArgumentException("Specify --file");
@@ -189,27 +156,16 @@ namespace juvula_cli
             string sha = Functions.HashFile(file);
             Console.WriteLine($"Hash\\ {sha}");
 
-            
+
         }
         static void HandleShred(string[] args)
         {
-            string? file = null;
-            int iteration = 5;
+            string? file = Functions.ArgsParser(args, "--file");
+            int iteration = int.Parse(Functions.ArgsParser(args, "--iteration") ?? "1");
 
-            for (int i = 1; i < args.Length; i++)
-            {
-                if (args[i] == "--file" && i + 1 < args.Length)
-                    file = args[++i];
+            if (file == null) throw new ArgumentException("Specify --file");
 
-                if (args[i] == "--iteration" && i + 1 < args.Length)
-                    iteration = Int32.Parse(args[++i]);
-            }
-
-            if (file == null)
-                throw new ArgumentException("Specify --file");
-
-            if (!File.Exists(file))
-                throw new FileNotFoundException($"File not found: {file}");
+            if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}");
 
             bool shreded = Functions.Shreder(file, iteration);
             Console.WriteLine($"shred: {shreded}");
@@ -225,8 +181,8 @@ namespace juvula_cli
             Console.WriteLine("""
 juvula - Secure File Tool 
 
-  genkey   --out <file> [--length <bytes>]
-  encrypt  --file <file> --keyfile <file>
+  genkey   --out  <file> [--length <bytes>]
+  encrypt  --file <file> --keyfile <file> [--shred <iterations>]
   decrypt  --file <file> --keyfile <file>
   hash     --file <file> [--keyfile <file>]
   shred    --file <file>

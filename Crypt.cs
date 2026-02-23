@@ -13,7 +13,8 @@ namespace juvula
         private const int KEY_SIZE = 32;        // 256 bit
         private const int HMAC_SIZE = 32;       // 256 bit
         private const int ITERATIONS = 100_000;
-        private const int TAG_SIZE = 16;        // 128 bit authentication tag 
+        private const int TAG_SIZE = 16;        // 128 bit authentication tag
+        private const int MIN_KEY_FILE_SIZE = 128; // Minimum key file size in bytes
 
 
         /// <summary>
@@ -29,8 +30,8 @@ namespace juvula
 
             // Load key file
             byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < 128)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than 128 bytes.");
+            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Invalid key file size. Cannot be less than {MIN_KEY_FILE_SIZE} bytes.");
 
             // Generate random salt and IV
             byte[] salt = RandomNumberGenerator.GetBytes(SALT_SIZE);
@@ -126,8 +127,8 @@ namespace juvula
 
             // Load key file
             byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < 128)
-                throw new CryptographicException($"Invalid key file size. Expected 128 bytes.");
+            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Invalid key file size. Expected {MIN_KEY_FILE_SIZE} bytes.");
 
             using (FileStream fsInput = new FileStream(inputFile, FileMode.Open))
             {
@@ -232,8 +233,8 @@ namespace juvula
 
             // Load key file
             byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < 128)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than 128 bytes.");
+            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Invalid key file size. Cannot be less than {128} bytes.");
 
             byte[] salt = RandomNumberGenerator.GetBytes(SALT_SIZE);
             byte[] nonce = RandomNumberGenerator.GetBytes(12); // GCM standard nonce size
@@ -258,13 +259,13 @@ namespace juvula
             byte[] tag = new byte[TAG_SIZE];
 
             // Encrypt with GCM
-            using (AesGcm aesGcm = new AesGcm(key, TAG_SIZE))
+            using (AesGcm aesGcm = new  (key, TAG_SIZE))
             {
                 aesGcm.Encrypt(nonce, plaintext, ciphertext, tag);
             }
 
             // Write all data
-            using (FileStream fsOutput = new FileStream(outputFile, FileMode.Create))
+            using (FileStream fsOutput = new  (outputFile, FileMode.Create))
             {
                 fsOutput.Write(salt, 0, salt.Length);
                 fsOutput.Write(nonce, 0, nonce.Length);
@@ -278,7 +279,7 @@ namespace juvula
             CryptographicOperations.ZeroMemory(masterSecret);
             CryptographicOperations.ZeroMemory(keyFileData);
 
-            Console.WriteLine("File encrypted successfully with AES-GCM and two-factor authentication.");
+            Console.WriteLine("File encrypted successfully");
         }
 
         public static void DecryptFileGcm(string inputFile, string outputFile, string password, string keyFilePath)
@@ -291,10 +292,10 @@ namespace juvula
 
             // Load key file
             byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < 128)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than 128  bytes.");
+            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Invalid key file size. Cannot be less than {MIN_KEY_FILE_SIZE}  bytes.");
 
-            using (FileStream fsInput = new FileStream(inputFile, FileMode.Open))
+            using (FileStream fsInput = new  (inputFile, FileMode.Open))
             {
                 // Read metadata
                 byte[] salt = new byte[SALT_SIZE];
@@ -325,7 +326,7 @@ namespace juvula
 
                 // Decrypt
                 byte[] plaintext = new byte[ciphertext.Length];
-                using (AesGcm aesGcm = new AesGcm(key, TAG_SIZE))
+                using (AesGcm aesGcm = new  (key, TAG_SIZE))
                 {
                     aesGcm.Decrypt(nonce, ciphertext, tag, plaintext);
                 }
@@ -339,7 +340,7 @@ namespace juvula
                 CryptographicOperations.ZeroMemory(keyFileData);
             }
 
-            Console.WriteLine("File decrypted successfully with AES-GCM and two-factor authentication.");
+            Console.WriteLine("File decrypted successfully");// with AES-GCM and two-factor authentication.
         }
     }
 }

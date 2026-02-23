@@ -1,13 +1,19 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Security.Cryptography;
-using System.Text;
+﻿using System.Security.Cryptography;
 
 namespace juvula
 {
     internal class Functions
     {
-        
+        public static readonly string EncodedExtension = "enc";
+        public static string? ArgsParser(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == name && i + 1 < args.Length)
+                    return args[++i];
+            }
+            return null;
+        }
         public static string ReadPassword()
         {
             var password = new System.Text.StringBuilder();
@@ -37,11 +43,13 @@ namespace juvula
 
             return password.ToString();
         }
-        public static string HashFile(string filePath) {
+        public static string HashFile(string filePath)
+        {
             byte[] key = System.Text.Encoding.UTF8.GetBytes("yv52h8tnyb892yntuvn9tu09trn2vr0codgy98");
 
 
-            string hash_sha256(){
+            string hash_sha256()
+            {
                 if (!File.Exists(filePath))
                     throw new FileNotFoundException($"File not found: {filePath}");
 
@@ -57,7 +65,7 @@ namespace juvula
             {
                 if (!File.Exists(filePath))
                     throw new FileNotFoundException($"File not found: {filePath}");
-                 
+
                 using var hmac = new HMACSHA256(key);
                 using var stream = File.OpenRead(filePath);
 
@@ -65,8 +73,8 @@ namespace juvula
 
                 return Convert.ToHexString(hash);
             }
-            return ($"\nHmac:   {hash_sha256()}"+
-                    $"\nSha256: {hash_hmac()}")+
+            return ($"\nHmac:   {hash_sha256()}" +
+                    $"\nSha256: {hash_hmac()}") +
                     $"\n";
         }
         public static bool Shreder(string filePath, int iteration = 2)
@@ -121,7 +129,7 @@ namespace juvula
 
 
                 File.SetAttributes(filePath, FileAttributes.Offline);
-               // File.Delete(filePath);
+                // File.Delete(filePath);
                 return true;
             }
             catch (Exception ex)
