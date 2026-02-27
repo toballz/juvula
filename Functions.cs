@@ -77,17 +77,38 @@ namespace juvula
                     $"\nSha256: {hash_hmac()}") +
                     $"\n";
         }
-        public static bool Shreder(string filePath, int iteration = 2)
+        public static bool Shreder(string filePath, int iteration = 3,bool truncate = true, bool delete=true)
         {
+            void setFileAttr()
+            {
+                try
+                {
+                    Random random = new();
+
+                    DateTime milidatetime = new(random.Next(1989, 2025), random.Next(1, 12), random.Next(1, 28));
+                    File.SetCreationTimeUtc(filePath, milidatetime);
+                    File.SetCreationTime(filePath, milidatetime);
+                    File.SetLastWriteTimeUtc(filePath, milidatetime);
+                    File.SetLastWriteTime(filePath, milidatetime);
+                    File.SetLastAccessTimeUtc(filePath, milidatetime);
+                    File.SetLastAccessTime(filePath, milidatetime);
+
+                    File.SetAttributes(filePath, FileAttributes.Offline);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"**\nWarning: Could not modify file attributes: {ex.Message}");
+                }
+            }
             try
             {
-                Console.WriteLine("\nShredding file....");
                 var fileInfo = new FileInfo(filePath);
                 long length = fileInfo.Length;
 
-                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Write))
+                using (FileStream fs = new  (filePath, FileMode.Open, FileAccess.Write))
                 {
-                    byte[] buffer = new byte[8192];
+                    // 
+                    byte[] buffer = new byte[8192]; 
 
                     for (int p = 0; p < iteration; p++)
                     {
@@ -98,14 +119,7 @@ namespace juvula
                         while (remaining > 0)
                         {
                             int toWrite = (int)Math.Min(buffer.Length, remaining);
-                            if (iteration % 2 == 0)
-                            {
-                                RandomNumberGenerator.Fill(buffer);
-                            }
-                            else
-                            {
-                                Array.Fill<byte>(buffer, (byte)(iteration * 0x55));
-                            }
+                            RandomNumberGenerator.Fill(buffer);
 
                             fs.Write(buffer, 0, toWrite);
                             remaining -= toWrite;
@@ -113,24 +127,12 @@ namespace juvula
 
                         fs.Flush(true); // force write to disk
                     }
+                    if (truncate) fs.SetLength(0); // truncate
+                    setFileAttr();// update file attr
+                    fs.Close();
+                    if (delete) File.Delete(filePath); // delete
+                    return true;
                 }
-
-
-                Random random = new();
-
-                DateTime milidatetime = new(random.Next(1980, 2020), random.Next(1, 13), random.Next(1, 28));
-                Console.WriteLine(milidatetime);
-                File.SetCreationTimeUtc(filePath, milidatetime);
-                File.SetCreationTime(filePath, milidatetime);
-                File.SetLastWriteTimeUtc(filePath, milidatetime);
-                File.SetLastWriteTime(filePath, milidatetime);
-                File.SetLastAccessTimeUtc(filePath, milidatetime);
-                File.SetLastAccessTime(filePath, milidatetime);
-
-
-                File.SetAttributes(filePath, FileAttributes.Offline);
-                // File.Delete(filePath);
-                return true;
             }
             catch (Exception ex)
             {

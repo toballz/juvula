@@ -9,7 +9,11 @@ namespace juvula_cli
         {
             if (args.Length == 0)
             {
-                PrintHelp();
+                Console.WriteLine(
+                    "\n########################################" +
+                    "\n########################################" +
+                    "\nWelcome to the world of yaya\n\n"
+                );
                 return;
             }
 
@@ -96,8 +100,8 @@ namespace juvula_cli
             Console.Write("Password: ");
             string password = Functions.ReadPassword();
 
+            Console.WriteLine("\n");
             Crypt.EncryptFileGcm(file, output, password, keyFile);
-
             Console.WriteLine($"Encrypted -> {output}");
 
             int shredIteration = int.Parse(Functions.ArgsParser(args, "--shred") ?? "0");
@@ -134,8 +138,8 @@ namespace juvula_cli
             Console.Write("Password: ");
             string password = Functions.ReadPassword();
 
+            Console.WriteLine("\n");
             Crypt.DecryptFileGcm(file, output, password, keyFile);
-
             Console.WriteLine($"Decrypted -> {output}");
         }
 
@@ -160,34 +164,60 @@ namespace juvula_cli
         }
         static void HandleShred(string[] args)
         {
+            Console.WriteLine("================Shredding==============\n");
+
             string? file = Functions.ArgsParser(args, "--file");
-            int iteration = int.Parse(Functions.ArgsParser(args, "--iteration") ?? "1");
+            string? dirPath = Functions.ArgsParser(args, "--dir");
+            int iteration = int.Parse(Functions.ArgsParser(args, "--iteration") ?? "3");
 
-            if (file == null) throw new ArgumentException("Specify --file");
+            void ShredFile(string inFile)
+            {
+                if (!File.Exists(inFile)) throw new FileNotFoundException($"File not found: {inFile}");
 
-            if (!File.Exists(file)) throw new FileNotFoundException($"File not found: {file}");
+                bool shredded = Functions.Shreder(inFile, iteration, true, true);
 
-            bool shreded = Functions.Shreder(file, iteration);
-            Console.WriteLine($"shred: {shreded}");
+                Console.WriteLine(
+                    ((!shredded) ?"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!":"")+
+                    shredded+": "+ inFile+"\n"
+                );
+            }
 
+            if (file != null)
+            {
+                ShredFile(file);
+                if(dirPath == null){ return; }
+            }
+            
+            if (dirPath != null)
+            {
+                if (!Directory.Exists(dirPath))
+                    throw new DirectoryNotFoundException($"Directory not found: {dirPath}");
 
+                var files = Directory.GetFiles(dirPath, "*", SearchOption.AllDirectories);
+
+                foreach (var f in files)
+                {
+                    ShredFile(f);
+                }
+                return;
+            }
+           
+
+           throw new ArgumentException("Specify --file or --dir [--iteration <int>]");
         }
-
         // =========================
         // HELP
         // =========================
         static void PrintHelp()
         {
-            Console.WriteLine("""
-juvula - Secure File Tool 
-
-  genkey   --out  <file> [--length <bytes>]
-  encrypt  --file <file> --keyfile <file> [--shred <iterations>]
-  decrypt  --file <file> --keyfile <file>
-  hash     --file <file> [--keyfile <file>]
-  shred    --file <file>
-   
-""");
+            Console.WriteLine(
+                "juvula - Secure File Tool\n\n" +
+                "genkey   --out  <file> [--length <bytes>]\n" +
+                "encrypt  --file <file> --keyfile <file> [--shred <iterations>]\n" +
+                "decrypt  --file <file> --keyfile <file>\n" +
+                "hash     --file <file> [--keyfile <file>]\n" +
+                "shred   [--file <file> || --dir <path>]\n"
+            );
         }
     }
 }
