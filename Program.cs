@@ -100,8 +100,8 @@ namespace juvula_cli
             Console.Write("Password: ");
             string password = Functions.ReadPassword();
 
-            Console.WriteLine("\n");
-            Crypt.EncryptFileGcm(file, output, password, keyFile);
+            Console.WriteLine("\nEncrypting File ....");
+            Crypt.EncryptFileCbc(file, output, password, keyFile);
             Console.WriteLine($"Encrypted -> {output}");
 
             int shredIteration = int.Parse(Functions.ArgsParser(args, "--shred") ?? "0");
@@ -138,8 +138,8 @@ namespace juvula_cli
             Console.Write("Password: ");
             string password = Functions.ReadPassword();
 
-            Console.WriteLine("\n");
-            Crypt.DecryptFileGcm(file, output, password, keyFile);
+            Console.WriteLine("\nDecrypting File ....");
+            Crypt.DecryptFileCbc(file, output, password, keyFile);
             Console.WriteLine($"Decrypted -> {output}");
         }
 
@@ -216,7 +216,7 @@ namespace juvula_cli
                 "encrypt  --file <file> --keyfile <file> [--shred <iterations>]\n" +
                 "decrypt  --file <file> --keyfile <file>\n" +
                 "hash     --file <file> [--keyfile <file>]\n" +
-                "shred   [--file <file> || --dir <path>]\n"
+                "shred   [--file <file> || --dir <path>] [--iteration <int>]\n"
             );
         }
     }

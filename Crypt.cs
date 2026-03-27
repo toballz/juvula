@@ -5,20 +5,21 @@ namespace juvula
 {
     internal class Crypt
     {
-        // Constants
-        private const int SALT_SIZE = 16;      // 128 bit
-        private const int IV_SIZE = 16;         // 128 bit
-        private const int KEY_SIZE = 32;        // 256 bit
-        private const int HMAC_SIZE = 32;       // 256 bit
+        private const int SALT_SIZE = 16;
+        private const int KEY_SIZE = 32;
         private const int ITERATIONS = 100_000;
-        private const int TAG_SIZE = 16;        // 128 bit authentication tag
-        private const int MIN_KEY_FILE_SIZE = 128; // Minimum key file size in bytes
-
+        private const int HMAC_SIZE = 32;
+        private const int MIN_KEY_FILE_SIZE = 128; // in bytes
+        private const int MAX_KEY_FILE_SIZE = 1024 * 1024; // 1 MB cap — prevents OOM from accidental huge key file
+        private const int BUFFER_SIZE = 8192;
+        private const int IV_SIZE = 16; // AES block size
 
         /// <summary>
-        /// Encrypts a file with both password and key file (two-factor authentication)
+        /// CBC encryption with padding — memory efficient for large files.
+        /// File format: [salt 16B][iv 16B][hmac 32B][ciphertext]
+        /// HMAC covers: salt + iv + ciphertext (full header authenticated)
         /// </summary>
-        public static void EncryptFile(string inputFile, string outputFile, string password, string keyFilePath)
+        public static void EncryptFileCbc(string inputFile, string outputFile, string password, string keyFilePath)
         {
             if (!File.Exists(inputFile))
                 throw new FileNotFoundException($"Input file not found: {inputFile}");
@@ -26,319 +27,240 @@ namespace juvula
             if (!File.Exists(keyFilePath))
                 throw new FileNotFoundException($"Key file not found: {keyFilePath}");
 
-            // Load key file
+            // FIX: cap key file size to prevent OOM on accidental large file
+            var keyFileInfo = new FileInfo(keyFilePath);
+            if (keyFileInfo.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Key file too small. Minimum size is {MIN_KEY_FILE_SIZE} bytes.");
+            if (keyFileInfo.Length > MAX_KEY_FILE_SIZE)
+                throw new CryptographicException($"Key file too large. Maximum size is {MAX_KEY_FILE_SIZE} bytes.");
+
             byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than {MIN_KEY_FILE_SIZE} bytes.");
-
-            // Generate random salt and IV
-            byte[] salt = RandomNumberGenerator.GetBytes(SALT_SIZE);
-            byte[] iv = RandomNumberGenerator.GetBytes(IV_SIZE);
-
-            // Combine password with key file to create master secret
-            byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
-            byte[] masterSecret = new byte[passwordBytes.Length + keyFileData.Length];
-            Buffer.BlockCopy(passwordBytes, 0, masterSecret, 0, passwordBytes.Length);
-            Buffer.BlockCopy(keyFileData, 0, masterSecret, passwordBytes.Length, keyFileData.Length);
-
-            // Create output file and write salt + IV
-            using (FileStream fsOutput = new FileStream(outputFile, FileMode.Create))
+            try
             {
-                // Write metadata
-                fsOutput.Write(salt, 0, salt.Length);
-                fsOutput.Write(iv, 0, iv.Length);
+                byte[] salt = RandomNumberGenerator.GetBytes(SALT_SIZE);
+                byte[] iv = RandomNumberGenerator.GetBytes(IV_SIZE);
 
-                // Reserve space for HMAC (will write at the end)
-                long hmacPosition = fsOutput.Position;
-                fsOutput.Write(new byte[HMAC_SIZE], 0, HMAC_SIZE); // Placeholder
-
-                // Derive encryption key and HMAC key from master secret
-                byte[] encryptionKey = Rfc2898DeriveBytes.Pbkdf2(
-                    masterSecret,
-                    salt,
-                    ITERATIONS,
-                    HashAlgorithmName.SHA256,
-                    KEY_SIZE);
-
-                byte[] hmacKey = Rfc2898DeriveBytes.Pbkdf2(
-                    masterSecret,
-                    salt,
-                    ITERATIONS,
-                    HashAlgorithmName.SHA256,
-                    KEY_SIZE);
-
-                // Encrypt the file
-                using (Aes aes = Aes.Create())
-                {
-                    aes.Key = encryptionKey;
-                    aes.IV = iv;
-                    aes.Mode = CipherMode.CBC;
-                    aes.Padding = PaddingMode.PKCS7;
-
-                    using (CryptoStream cs = new CryptoStream(fsOutput, aes.CreateEncryptor(), CryptoStreamMode.Write, leaveOpen: true))
-                    using (FileStream fsInput = new FileStream(inputFile, FileMode.Open))
-                    {
-                        fsInput.CopyTo(cs);
-                        cs.FlushFinalBlock();
-                    }
-                }
-
-                // Calculate HMAC of everything except the HMAC itself
-                using (HMACSHA256 hmac = new HMACSHA256(hmacKey))
-                {
-                    // Go back to start of file
-                    fsOutput.Seek(0, SeekOrigin.Begin);
-
-                    // Read entire file up to where HMAC will be written
-                    byte[] fileData = new byte[hmacPosition];
-                    fsOutput.ReadExactly(fileData);
-
-                    // Compute HMAC
-                    byte[] computedHmac = hmac.ComputeHash(fileData);
-
-                    // Write HMAC at reserved position
-                    fsOutput.Seek(hmacPosition, SeekOrigin.Begin);
-                    fsOutput.Write(computedHmac, 0, computedHmac.Length);
-                }
-
-                // Securely clear sensitive data
-                CryptographicOperations.ZeroMemory(encryptionKey);
-                CryptographicOperations.ZeroMemory(hmacKey);
-                CryptographicOperations.ZeroMemory(passwordBytes);
-                CryptographicOperations.ZeroMemory(masterSecret);
-                CryptographicOperations.ZeroMemory(keyFileData);
-            }
-
-            Console.WriteLine("File encrypted successfully with two-factor authentication.");
-        }
-
-        /// <summary>
-        /// Decrypts a file requiring both password and key file
-        /// </summary>
-        public static void DecryptFile(string inputFile, string outputFile, string password, string keyFilePath)
-        {
-            if (!File.Exists(inputFile))
-                throw new FileNotFoundException($"Encrypted file not found: {inputFile}");
-
-            if (!File.Exists(keyFilePath))
-                throw new FileNotFoundException($"Key file not found: {keyFilePath}");
-
-            // Load key file
-            byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
-                throw new CryptographicException($"Invalid key file size. Expected {MIN_KEY_FILE_SIZE} bytes.");
-
-            using (FileStream fsInput = new FileStream(inputFile, FileMode.Open))
-            {
-                // Check minimum file size
-                if (fsInput.Length < SALT_SIZE + IV_SIZE + HMAC_SIZE)
-                    throw new CryptographicException("File is corrupted or not encrypted with this method.");
-
-                // Read salt and IV
-                byte[] salt = new byte[SALT_SIZE];
-                byte[] iv = new byte[IV_SIZE];
-                byte[] storedHmac = new byte[HMAC_SIZE];
-
-                fsInput.ReadExactly(salt);
-                fsInput.ReadExactly(iv);
-                fsInput.ReadExactly(storedHmac);
-
-                // Combine password with key file to create master secret
                 byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
                 byte[] masterSecret = new byte[passwordBytes.Length + keyFileData.Length];
                 Buffer.BlockCopy(passwordBytes, 0, masterSecret, 0, passwordBytes.Length);
                 Buffer.BlockCopy(keyFileData, 0, masterSecret, passwordBytes.Length, keyFileData.Length);
 
-                // Derive keys from master secret
-                byte[] encryptionKey = Rfc2898DeriveBytes.Pbkdf2(
-                    masterSecret,
-                    salt,
-                    ITERATIONS,
-                    HashAlgorithmName.SHA256,
-                    KEY_SIZE);
-
-                byte[] hmacKey = Rfc2898DeriveBytes.Pbkdf2(
-                    masterSecret,
-                    salt,
-                    ITERATIONS,
-                    HashAlgorithmName.SHA256,
-                    KEY_SIZE);
-
-                // Verify HMAC before decryption
-                using (HMACSHA256 hmac = new HMACSHA256(hmacKey))
-                {
-                    // Go back to start of file
-                    fsInput.Seek(0, SeekOrigin.Begin);
-
-                    // Read everything except the HMAC itself
-                    byte[] fileData = new byte[fsInput.Length - HMAC_SIZE];
-                    fsInput.ReadExactly(fileData);
-
-                    // Compute HMAC
-                    byte[] computedHmac = hmac.ComputeHash(fileData);
-
-                    // Constant-time comparison to prevent timing attacks
-                    if (!CryptographicOperations.FixedTimeEquals(computedHmac, storedHmac))
-                    {
-                        CryptographicOperations.ZeroMemory(encryptionKey);
-                        CryptographicOperations.ZeroMemory(hmacKey);
-                        CryptographicOperations.ZeroMemory(passwordBytes);
-                        CryptographicOperations.ZeroMemory(masterSecret);
-                        CryptographicOperations.ZeroMemory(keyFileData);
-                        throw new CryptographicException("Invalid password, key file, or file has been tampered with.");
-                    }
-                }
-
-                // Decrypt the file
-                using (Aes aes = Aes.Create())
-                {
-                    aes.Key = encryptionKey;
-                    aes.IV = iv;
-                    aes.Mode = CipherMode.CBC;
-                    aes.Padding = PaddingMode.PKCS7;
-
-                    // Position after salt, IV, and HMAC
-                    fsInput.Seek(SALT_SIZE + IV_SIZE + HMAC_SIZE, SeekOrigin.Begin);
-
-                    using (CryptoStream cs = new CryptoStream(fsInput, aes.CreateDecryptor(), CryptoStreamMode.Read, leaveOpen: true))
-                    using (FileStream fsOutput = new FileStream(outputFile, FileMode.Create))
-                    {
-                        cs.CopyTo(fsOutput);
-                    }
-                }
-
-                // Securely clear sensitive data
-                CryptographicOperations.ZeroMemory(encryptionKey);
-                CryptographicOperations.ZeroMemory(hmacKey);
-                CryptographicOperations.ZeroMemory(passwordBytes);
-                CryptographicOperations.ZeroMemory(masterSecret);
-                CryptographicOperations.ZeroMemory(keyFileData);
-            }
-
-            Console.WriteLine("File decrypted successfully with two-factor authentication.");
-        }
-
-        /// <summary>
-        /// GCM version with two-factor authentication
-        /// </summary>
-        public static void EncryptFileGcm(string inputFile, string outputFile, string password, string keyFilePath)
-        {
-            if (!File.Exists(inputFile))
-                throw new FileNotFoundException($"Input file not found: {inputFile}");
-
-            if (!File.Exists(keyFilePath))
-                throw new FileNotFoundException($"Key file not found: {keyFilePath}");
-
-            // Load key file
-            byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than {128} bytes.");
-
-            byte[] salt = RandomNumberGenerator.GetBytes(SALT_SIZE);
-            byte[] nonce = RandomNumberGenerator.GetBytes(12); // GCM standard nonce size
-
-            // Combine password with key file
-            byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
-            byte[] masterSecret = new byte[passwordBytes.Length + keyFileData.Length];
-            Buffer.BlockCopy(passwordBytes, 0, masterSecret, 0, passwordBytes.Length);
-            Buffer.BlockCopy(keyFileData, 0, masterSecret, passwordBytes.Length, keyFileData.Length);
-
-            // Derive key from master secret
-            byte[] key = Rfc2898DeriveBytes.Pbkdf2(
-                masterSecret,
-                salt,
-                ITERATIONS,
-                HashAlgorithmName.SHA256,
-                KEY_SIZE);
-
-            // Read input file
-            byte[] plaintext = File.ReadAllBytes(inputFile);
-            byte[] ciphertext = new byte[plaintext.Length];
-            byte[] tag = new byte[TAG_SIZE];
-
-            // Encrypt with GCM
-            using (AesGcm aesGcm = new  (key, TAG_SIZE))
-            {
-                aesGcm.Encrypt(nonce, plaintext, ciphertext, tag);
-            }
-
-            // Write all data
-            using (FileStream fsOutput = new  (outputFile, FileMode.Create))
-            {
-                fsOutput.Write(salt, 0, salt.Length);
-                fsOutput.Write(nonce, 0, nonce.Length);
-                fsOutput.Write(tag, 0, tag.Length);
-                fsOutput.Write(ciphertext, 0, ciphertext.Length);
-            }
-
-            // Securely clear sensitive data
-            CryptographicOperations.ZeroMemory(key);
-            CryptographicOperations.ZeroMemory(passwordBytes);
-            CryptographicOperations.ZeroMemory(masterSecret);
-            CryptographicOperations.ZeroMemory(keyFileData);
-
-            Console.WriteLine("File encrypted successfully");
-        }
-
-        public static void DecryptFileGcm(string inputFile, string outputFile, string password, string keyFilePath)
-        {
-            if (!File.Exists(inputFile))
-                throw new FileNotFoundException($"Encrypted file not found: {inputFile}");
-
-            if (!File.Exists(keyFilePath))
-                throw new FileNotFoundException($"Key file not found: {keyFilePath}");
-
-            // Load key file
-            byte[] keyFileData = File.ReadAllBytes(keyFilePath);
-            if (keyFileData.Length < MIN_KEY_FILE_SIZE)
-                throw new CryptographicException($"Invalid key file size. Cannot be less than {MIN_KEY_FILE_SIZE}  bytes.");
-
-            using (FileStream fsInput = new  (inputFile, FileMode.Open))
-            {
-                // Read metadata
-                byte[] salt = new byte[SALT_SIZE];
-                byte[] nonce = new byte[12];
-                byte[] tag = new byte[TAG_SIZE];
-
-                fsInput.ReadExactly(salt);
-                fsInput.ReadExactly(nonce);
-                fsInput.ReadExactly(tag);
-
-                // Read ciphertext
-                byte[] ciphertext = new byte[fsInput.Length - fsInput.Position];
-                fsInput.ReadExactly(ciphertext);
-
-                // Combine password with key file
-                byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
-                byte[] masterSecret = new byte[passwordBytes.Length + keyFileData.Length];
-                Buffer.BlockCopy(passwordBytes, 0, masterSecret, 0, passwordBytes.Length);
-                Buffer.BlockCopy(keyFileData, 0, masterSecret, passwordBytes.Length, keyFileData.Length);
-
-                // Derive key from master secret
+                // Derive encryption key and HMAC key in one PBKDF2 call
                 byte[] key = Rfc2898DeriveBytes.Pbkdf2(
                     masterSecret,
                     salt,
                     ITERATIONS,
                     HashAlgorithmName.SHA256,
-                    KEY_SIZE);
+                    KEY_SIZE * 2);
 
-                // Decrypt
-                byte[] plaintext = new byte[ciphertext.Length];
-                using (AesGcm aesGcm = new  (key, TAG_SIZE))
+                byte[] encKey = key[0..KEY_SIZE];
+                byte[] hmacKey = key[KEY_SIZE..];
+
+                string tempFile = Path.GetTempFileName();
+                try
                 {
-                    aesGcm.Decrypt(nonce, ciphertext, tag, plaintext);
+                    using (FileStream fsOutput = new FileStream(tempFile, FileMode.Create, FileAccess.ReadWrite, FileShare.None, BUFFER_SIZE))
+                    {
+                        // Write salt and IV
+                        fsOutput.Write(salt, 0, salt.Length);
+                        fsOutput.Write(iv, 0, iv.Length);
+
+                        // Reserve space for HMAC (filled in after ciphertext is written)
+                        long hmacPosition = fsOutput.Position;
+                        fsOutput.Write(new byte[HMAC_SIZE], 0, HMAC_SIZE);
+
+                        // Encrypt input file and write ciphertext
+                        using (Aes aes = Aes.Create())
+                        {
+                            aes.Key = encKey;
+                            aes.IV = iv;
+                            aes.Mode = CipherMode.CBC;
+                            aes.Padding = PaddingMode.PKCS7;
+
+                            using (var encryptor = aes.CreateEncryptor())
+                            using (var cryptoStream = new CryptoStream(fsOutput, encryptor, CryptoStreamMode.Write, leaveOpen: true))
+                            using (FileStream fsInput = new FileStream(inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, BUFFER_SIZE))
+                            {
+                                byte[] buffer = new byte[BUFFER_SIZE];
+                                int bytesRead;
+                                while ((bytesRead = fsInput.Read(buffer, 0, buffer.Length)) > 0)
+                                    cryptoStream.Write(buffer, 0, bytesRead);
+                                cryptoStream.FlushFinalBlock();
+                            }
+                        }
+
+                        // FIX: HMAC now covers salt + iv + ciphertext (not just ciphertext).
+                        // This prevents an attacker from flipping IV bits to corrupt the
+                        // first decrypted block without invalidating the MAC.
+                        using (var hmac = new HMACSHA256(hmacKey))
+                        {
+                            // Seek to start of file (salt) so HMAC covers the full header
+                            fsOutput.Seek(0, SeekOrigin.Begin);
+
+                            // Skip over the HMAC placeholder — include salt + iv, then jump
+                            // past the HMAC slot, then include ciphertext
+                            byte[] headerBuffer = new byte[SALT_SIZE + IV_SIZE];
+                            fsOutput.ReadExactly(headerBuffer, 0, headerBuffer.Length);
+                            hmac.TransformBlock(headerBuffer, 0, headerBuffer.Length, null, 0);
+
+                            // Skip the HMAC placeholder bytes
+                            fsOutput.Seek(HMAC_SIZE, SeekOrigin.Current);
+
+                            // FIX: simplified read loop — no complex Math.Min arithmetic.
+                            // FileStream.Read naturally stops at EOF; the old loop had a
+                            // subtle off-by-one that could skip the last partial chunk.
+                            byte[] buffer = new byte[BUFFER_SIZE];
+                            int bytesRead;
+                            while ((bytesRead = fsOutput.Read(buffer, 0, buffer.Length)) > 0)
+                                hmac.TransformBlock(buffer, 0, bytesRead, null, 0);
+
+                            hmac.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                            byte[] hmacValue = hmac.Hash!;
+
+                            // Write HMAC into the reserved slot
+                            fsOutput.Seek(hmacPosition, SeekOrigin.Begin);
+                            fsOutput.Write(hmacValue, 0, HMAC_SIZE);
+                        }
+                    }
+
+                    File.Move(tempFile, outputFile, true);
+                }
+                finally
+                {
+                    if (File.Exists(tempFile))
+                        File.Delete(tempFile);
                 }
 
-                File.WriteAllBytes(outputFile, plaintext);
-
-                // Securely clear sensitive data
                 CryptographicOperations.ZeroMemory(key);
+                CryptographicOperations.ZeroMemory(encKey);
+                CryptographicOperations.ZeroMemory(hmacKey);
                 CryptographicOperations.ZeroMemory(passwordBytes);
                 CryptographicOperations.ZeroMemory(masterSecret);
+
+                Console.WriteLine("File encrypted successfully");
+                Console.WriteLine($"Original size:  {new FileInfo(inputFile).Length} bytes");
+                Console.WriteLine($"Encrypted size: {new FileInfo(outputFile).Length} bytes");
+                Console.WriteLine($"Overhead: {SALT_SIZE + IV_SIZE + HMAC_SIZE} bytes + PKCS7 padding (1–16 bytes)");
+            }
+            finally
+            {
                 CryptographicOperations.ZeroMemory(keyFileData);
             }
+        }
 
-            Console.WriteLine("File decrypted successfully");// with AES-GCM and two-factor authentication.
+        /// <summary>
+        /// CBC decryption with padding — memory efficient for large files.
+        /// Performs authenticate-then-decrypt: HMAC is fully verified before
+        /// any plaintext is written, preventing padding oracle and tampering attacks.
+        /// </summary>
+        public static void DecryptFileCbc(string inputFile, string outputFile, string password, string keyFilePath)
+        {
+            if (!File.Exists(inputFile))
+                throw new FileNotFoundException($"Encrypted file not found: {inputFile}");
+
+            if (!File.Exists(keyFilePath))
+                throw new FileNotFoundException($"Key file not found: {keyFilePath}");
+
+            // FIX: cap key file size to prevent OOM
+            var keyFileInfo = new FileInfo(keyFilePath);
+            if (keyFileInfo.Length < MIN_KEY_FILE_SIZE)
+                throw new CryptographicException($"Key file too small. Minimum size is {MIN_KEY_FILE_SIZE} bytes.");
+            if (keyFileInfo.Length > MAX_KEY_FILE_SIZE)
+                throw new CryptographicException($"Key file too large. Maximum size is {MAX_KEY_FILE_SIZE} bytes.");
+
+            byte[] keyFileData = File.ReadAllBytes(keyFilePath);
+            try
+            {
+                using (FileStream fsInput = new FileStream(inputFile, FileMode.Open, FileAccess.Read, FileShare.Read, BUFFER_SIZE))
+                {
+                    // Read header
+                    byte[] salt = new byte[SALT_SIZE];
+                    byte[] iv = new byte[IV_SIZE];
+                    byte[] storedHmac = new byte[HMAC_SIZE];
+
+                    fsInput.ReadExactly(salt, 0, SALT_SIZE);
+                    fsInput.ReadExactly(iv, 0, IV_SIZE);
+                    fsInput.ReadExactly(storedHmac, 0, HMAC_SIZE);
+
+                    byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
+                    byte[] masterSecret = new byte[passwordBytes.Length + keyFileData.Length];
+                    Buffer.BlockCopy(passwordBytes, 0, masterSecret, 0, passwordBytes.Length);
+                    Buffer.BlockCopy(keyFileData, 0, masterSecret, passwordBytes.Length, keyFileData.Length);
+
+                    byte[] key = Rfc2898DeriveBytes.Pbkdf2(
+                        masterSecret,
+                        salt,
+                        ITERATIONS,
+                        HashAlgorithmName.SHA256,
+                        KEY_SIZE * 2);
+
+                    byte[] encKey = key[0..KEY_SIZE];
+                    byte[] hmacKey = key[KEY_SIZE..];
+
+                    try
+                    {
+                        // ── Step 1: Verify HMAC (authenticate-then-decrypt) ──────────────────
+                        // FIX: HMAC now covers salt + iv + ciphertext, matching encryption.
+                        long ciphertextStart = fsInput.Position;
+
+                        using (var hmac = new HMACSHA256(hmacKey))
+                        {
+                            // Feed salt and iv into HMAC first
+                            hmac.TransformBlock(salt, 0, salt.Length, null, 0);
+                            hmac.TransformBlock(iv, 0, iv.Length, null, 0);
+
+                            // FIX: simplified read loop — no complex Math.Min arithmetic
+                            byte[] buffer = new byte[BUFFER_SIZE];
+                            int bytesRead;
+                            while ((bytesRead = fsInput.Read(buffer, 0, buffer.Length)) > 0)
+                                hmac.TransformBlock(buffer, 0, bytesRead, null, 0);
+
+                            hmac.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+                            byte[] computedHmac = hmac.Hash!;
+
+                            if (!CryptographicOperations.FixedTimeEquals(storedHmac, computedHmac))
+                                throw new CryptographicException("Authentication failed: file may have been tampered with, or wrong password/key file.");
+                        }
+
+                        // ── Step 2: Decrypt (only reached if HMAC passed) ────────────────────
+                        fsInput.Seek(ciphertextStart, SeekOrigin.Begin);
+
+                        using (FileStream fsOutput = new FileStream(outputFile, FileMode.Create, FileAccess.Write, FileShare.None, BUFFER_SIZE))
+                        using (Aes aes = Aes.Create())
+                        {
+                            aes.Key = encKey;
+                            aes.IV = iv;
+                            aes.Mode = CipherMode.CBC;
+                            aes.Padding = PaddingMode.PKCS7;
+
+                            using (var decryptor = aes.CreateDecryptor())
+                            using (var cryptoStream = new CryptoStream(fsOutput, decryptor, CryptoStreamMode.Write))
+                            {
+                                byte[] buffer = new byte[BUFFER_SIZE];
+                                int bytesRead;
+                                while ((bytesRead = fsInput.Read(buffer, 0, buffer.Length)) > 0)
+                                    cryptoStream.Write(buffer, 0, bytesRead);
+                                cryptoStream.FlushFinalBlock();
+                            }
+                        }
+
+                        Console.WriteLine("File decrypted successfully");
+                        Console.WriteLine($"Decrypted size: {new FileInfo(outputFile).Length} bytes");
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(key);
+                        CryptographicOperations.ZeroMemory(encKey);
+                        CryptographicOperations.ZeroMemory(hmacKey);
+                        CryptographicOperations.ZeroMemory(passwordBytes);
+                        CryptographicOperations.ZeroMemory(masterSecret);
+                    }
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(keyFileData);
+            }
         }
     }
 }

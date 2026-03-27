@@ -25,7 +25,7 @@ namespace juvula
 
                 if (key.Key == ConsoleKey.Enter)
                 {
-                    Console.WriteLine();
+                    Console.WriteLine("**");
                     break;
                 }
 
@@ -45,8 +45,7 @@ namespace juvula
         }
         public static string HashFile(string filePath)
         {
-            byte[] key = System.Text.Encoding.UTF8.GetBytes("yv52h8tnyb892yntuvn9tu09trn2vr0codgy98");
-
+ 
 
             string hash_sha256()
             {
@@ -59,22 +58,22 @@ namespace juvula
                 byte[] hash = sha256.ComputeHash(stream);
 
                 return Convert.ToHexString(hash); // uppercase hex
-            }
+            } 
 
-            string hash_hmac()
+            string hash_sha512()
             {
                 if (!File.Exists(filePath))
                     throw new FileNotFoundException($"File not found: {filePath}");
 
-                using var hmac = new HMACSHA256(key);
+                using var sha512 = SHA512.Create();
                 using var stream = File.OpenRead(filePath);
 
-                byte[] hash = hmac.ComputeHash(stream);
+                byte[] hash = sha512.ComputeHash(stream);
 
-                return Convert.ToHexString(hash);
+                return Convert.ToHexString(hash); // uppercase hex
             }
-            return ($"\nHmac:   {hash_sha256()}" +
-                    $"\nSha256: {hash_hmac()}") +
+            return ($"\nSha256:   {hash_sha256()}" +
+                    $"\nSha512: {hash_sha512()}") +
                     $"\n";
         }
         public static bool Shreder(string filePath, int iteration = 3,bool truncate = true, bool delete=true)
